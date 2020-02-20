@@ -1,0 +1,421 @@
+---
+title: "Project"
+author: "Aashesh"
+date: "November 18, 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Online Shopper Purchasing Intention
+Online shopping has made our life easy with purchasing the items done in minutes. But it is not everytime that we end up purchasing the item. Or in other words, we can say that there is no guaratanee that customer has the intention to purchase whenever he visits an ecommere website. The goal of this project is analyse the factors that help in determining the visitor purchasing intent and the predict if customer has purchasing intent or not given a new set of test attributes that has various Information related to customer behavior in online shopping websites. The outcome of the project can recommend the employers in targeting customers and help the employers in improvising the marketing strategies.
+
+__Load required packages:__
+```{r loadpackages, message=FALSE, echo=FALSE}
+pacman::p_load(data.table, DT, ggplot2,tinytex,adabag,DMwR,partykit,neuralnet, nnet, dplyr,GGally,tidyverse,rmarkdown,caret,fastAdaboost,corrplot,
+               e1071,ISLR,DMwR,tree,randomForest,install = TRUE)
+```
+
+## About the Dataset
+The dataset consists of feature vectors belonging to 12,330 sessions. Each session would belong to a different user in a 1-year period and any tendency to a specific campaign, special day, user profile, or period is avoided. The dataset consists of 10 numerical and 8 categorical attributes. The Revenue or Purchasing Intention attribute is used as the class label
+
+__About the Dataset:__
+```{r dataset, echo=FALSE}
+df <- fread("online_shoppers_intention.csv")
+
+```
+
+__Data Cleaning:__
+```{r DataCleaning, echo=FALSE}
+###Null values check
+df <- df[rowSums(is.na(df)) == 0,]
+### There are 14 observations with null values and these observations can be dropped from the dataset
+
+###Converting the datatype of categorical features to factors
+df$TrafficType <- as.factor(df$TrafficType)
+df$Month <- as.factor(df$Month)
+df$OperatingSystems <- as.factor(df$OperatingSystems)
+df$Browser <- as.factor(df$Browser)
+df$Region <- as.factor(df$Region)
+df$VisitorType <- as.factor(df$VisitorType)
+df$Weekend <- as.factor(df$Weekend)
+df$Revenue <- as.factor(df$Revenue)
+df_clustering <- df
+
+ggplot(data = df, aes(Revenue)) + geom_bar(fill = "darkblue",width = 0.5) +scale_x_discrete("Revenue Generated")+labs(title = "Proporation of Target Class")
+### Revenue True: 1909 observations, Revenue False: 12331 observations
+### Proportion of the target class is 85: 15, which means the dataset is highly imbalanced.
+
+### Revenue or Purchasing Intention based on Weekends 
+ggplot(data = df, aes(Weekend,fill=Revenue)) + geom_bar(position = "fill") +scale_x_discrete("Weekend")+scale_y_continuous(labels = scales::percent)+labs(title = "Revenue Generated on Weekends")
+###The revenue generated on weekends is slightly higher than the non-weekends. Out of all the user sessions, 17.4 % of the users ended up purchasing on weekends and 14.9% of the users ended up not purchasing 
+
+### Based on Visitor Type
+ggplot(data = df, aes(VisitorType,fill=Revenue)) + geom_bar(position = "fill") +scale_x_discrete("Visitor Type")+scale_y_continuous(labels = scales::percent)+labs(title = "Revenue Generated based on Visitor type")
+###New_Visitor has more intention to purchase than the Returning and Other visitors. So, users are are creating an account and visiting the website for the sole reason to purchase the item. 
+
+### Based on Month
+ggplot(data = df, aes(Month,fill=Revenue)) + geom_bar(position = "fill") +scale_x_discrete("Month")+scale_y_continuous(labels = scales::percent)+labs(title = "Revenue Generated based on Month")
+### User intention to purchase is the highest across November. And this is due to the week of Thanksgiving, where people tend to purchase more whenever they visit the shopping website. It is interesting to see users has the least intention to purchase in February, although there is valentine day in February. Looks like a lot of single people out there. 
+
+### Based on Browser
+ggplot(data = df, aes(Browser,fill=Revenue)) + geom_bar(position = "fill") +scale_x_discrete("Browser")+scale_y_continuous(labels = scales::percent)+labs(title = "Revenue Generated based on Browser")
+### Users using the browsers 12 and 13 has more revenue compared to the other browsers used
+
+### Revenue or Intention to buy is almost the same across different Operating Systems and Regions.
+
+### Check for correlation 
+df_numeric <- select(df,'Administrative_Duration','Informational_Duration','ProductRelated_Duration','BounceRates','ExitRates','PageValues')
+corrplot(cor(df_numeric), type = "lower", method = "ellipse")
+### Bounce Rate and Exit Rate are highly correlated with 0.91. All the others feature have low to medium amount of correlation with each other.
+
+###Binning features into classes based on their quartiles
+df$Administrative_class <- with(df, cut(Administrative_Duration, breaks=quantile(Administrative_Duration, probs=seq(0,1,by=0.25), na.rm=TRUE),labels=c("Low","Medium","High","VeryHigh"), include.lowest=TRUE))
+
+df$Informational_class <- with(df, cut(Informational_Duration, breaks=quantile(Informational_Duration, probs=seq(0,1,by=0.50), na.rm=TRUE),labels=c("Low","High"), include.lowest=TRUE))
+
+df$ProductRelated_class <- with(df, cut(ProductRelated_Duration, breaks=quantile(ProductRelated_Duration, probs=seq(0,1,by=0.25), na.rm=TRUE),labels=c("Low","Medium","High","VeryHigh"), include.lowest=TRUE))
+
+##Outliers check
+##Administrative_Duration
+admin_duration_ot <- IQR(df$Administrative_Duration)*1.5 + quantile(df$Administrative_Duration)[4]
+### Feature Administrative_Duration has 9% of its observations to be outliers
+nrow(as.data.frame(df[df$Administrative_Duration >admin_duration_ot]$Administrative_Duration))
+
+##ProductRelated_Duration
+product_duration_ot <- IQR(df$ProductRelated_Duration)*1.5 + quantile(df$ProductRelated_Duration)[4]
+nrow(as.data.frame(df[df$ProductRelated_Duration >product_duration_ot]$ProductRelated_Duration))
+###Feature ProductRelated_Duration has 7% of its observations to be outliers.
+
+##Informational_Duration
+info_duration_ot <- IQR(df$Informational_Duration)*1.5 + quantile(df$Informational_Duration)[4]
+nrow(as.data.frame(df[df$Informational_Duration >info_duration_ot]$Informational_Duration))
+###Feature ProductRelated_Duration has 19% of its observations to be outliers
+
+df$Administrative_Duration<-NULL
+df$Informational_Duration<-NULL
+df$ProductRelated_Duration<-NULL
+
+set.seed(1)
+train.index <- createDataPartition(df$Revenue, p=0.7,list=FALSE)
+df_train <- df[train.index, ]    ### Training Data
+df_test <- df[-train.index, ]    ### Test Data
+###Actual Data before sampling
+table(df_train$Revenue)
+
+df_upsampled<-SMOTE(Revenue ~ ., df_train, perc.over= 400,perc.under = 140)
+###SMOTE Sampled Data
+table(df_upsampled$Revenue)
+
+```
+
+Why is Recall Score used here?
+It is metric that determines how well the classifier was able to predict a specific target class. For this dataset, our class of interest is to determine and find the users having the intention to purchase (Revenue Feature is True). We do not worry much if user who is no intention to purhcase is classified as interested users as its misclassification cost is very low. The goal of the models is to know how well the model can generalise and predict the interested users (Revenue Feature is True)
+
+## Decision Tree
+
+Implementing the Decision Tree Algorithm with various depths on training upsampled data and test data
+__Selecting the Optimal Depth:__
+```{r echo=FALSE}
+tree_model = tree(Revenue~ . , data=df_upsampled)
+### Decision Tree Implementation
+data_df<-data.frame()
+for (depth in 1:15) {
+tree_model <- rpart(Revenue~ . ,data=df_upsampled,maxdepth = depth,cp=0)
+
+###Predictions
+pred_train <- predict(tree_model, df_upsampled, type="class")
+pred_test <- predict(tree_model, df_test, type="class")
+
+###Evaludations
+train_scores<-sensitivity(pred_train, df_upsampled$Revenue, positive="TRUE")
+test_scores<-sensitivity(pred_test, df_test$Revenue, positive="TRUE")
+scores = c(depth,train_scores,test_scores)
+data_df <- rbind(data_df,scores)
+}
+colnames(data_df)<- c("Depth","Training Recall Score","Testing Recall Score")
+table(df_test$Revenue, pred_test)
+
+ggplot(data=data_df,aes(Depth))+
+  geom_line(aes(y=`Training Recall Score`, colour = "Train"))+
+  geom_line(aes(y=`Testing Recall Score`, colour = "Test"))
+```
+
+As we see from the plot above the training recall score is reaching close to 1 with increasing depths. This is due to the below reasons 
+
+1) Decision Trees are very prone to overfitting as its depth increases.
+2) Training data used in SMOTE sampled data.
+
+The testing recall score reached its maximum at depth 5 and can be chosen as its optimal parameter
+
+Note: Decision Trees overfit on training data even with the use of cross validation with increasing depths.
+
+__Implementation of Decision Tree using the Optimal Depth = 5:__
+```{r Optimal Decision Tree,echo=FALSE}
+tree_model <- rpart(Revenue~ . ,data=df_upsampled,maxdepth = 5,cp=0)
+#summary(tree_model)
+pred_test <- predict(tree_model, df_test, type="class")
+
+test_scores<-sensitivity(pred_test, df_test$Revenue, positive="TRUE")
+
+### Confusion Matrix
+table(df_test$Revenue, pred_test,dnn = c("Actual","Predicted"))
+cat("\nTest recall score is\n\n",test_scores)
+
+tree_model$variable.importance
+```
+Decision Tree can also be used as a feature selection process as the nodes in the trees are split based on the information and entropy provided by each of the features
+
+## RandomForest
+
+Hyperparameter tuning of the RandomForest Algorithm using cross validation to find the optimal number of learners
+__Selecting the number of learners with cross validation__:
+```{r rfc,echo=FALSE}
+set.seed(2)
+folds = createFolds(df_upsampled$Revenue, k = 3)
+# in cv we are going to applying a created function to our 'folds'
+rfc_df <- data.frame()
+
+###Max Nodes constant at 5
+for (trees in seq(5,100,5)) { 
+cv = lapply(folds, function(x) { # start of function
+  
+  training_fold = df_upsampled[-x, ] 
+  test_fold = df_upsampled[x, ] 
+  classifier = randomForest(Revenue ~ ., data = df_upsampled, maxnodes=5,ntree=trees,importance = TRUE)
+  
+  y_pred = predict(classifier, newdata = test_fold)
+  recall = sensitivity(y_pred, test_fold$Revenue, positive="TRUE")
+  return(recall)
+}) 
+pred = mean(as.numeric(cv))
+scores = c(trees,pred)
+rfc_df <- rbind(rfc_df,scores)
+}
+colnames(rfc_df)<- c("Trees","Validation Recall Score")
+
+ggplot(data=rfc_df,aes(Trees))+
+  geom_line(aes(y=`Validation Recall Score`))+
+  ggtitle("Number of Learners Vs Validation Score")
+
+```
+
+Random Forest seems to be performing really well on the training data giving us a recall score of 0.95 when the number of trees used is greater than 70.
+
+Unlike decision trees, random forests are not prone to overfitting as we are setting the depth of each tree at its optimal and is constant. Here, for training the random forest, maxnodes of 5 was used as the decision tree gave an optimal depth at 5. Random forest uses the maximum votin of the trees to perform its classification. And as the number of learners increases, we will not have any bias in the classification and each of the trees will contribute to the voting and hence this avoids the overfitting issue.
+
+__Implementation of Random Forest using the Optimal Number of trees =80:__
+```{r rfc1,echo=FALSE}
+set.seed(2)
+rfc <- randomForest(Revenue ~ ., data = df_upsampled, maxnodes=5,ntree=80,importance = TRUE)
+
+pred_test <- predict(rfc,df_test,type="class")
+
+test_scores<-sensitivity(pred_test, df_test$Revenue, positive="TRUE")
+### Confusion Matrix
+table(df_test$Revenue, pred_test,dnn = c("Actual","Predicted"))
+
+cat("\nTest recall score is",test_scores)
+
+
+```
+
+With Random Forest, there is a slight increase in the test recall score by close to 2% compared to the Decision Tree Model
+
+
+## AdaBoosting
+__Selecting the Optimal number of estimators of learners:__
+```{r Boosting,echo=FALSE}
+set.seed(3)
+boosting_df<-data.frame()
+for (iter in 1:15) {
+boosting<-adaboost(Revenue~ . ,data=df_upsampled,tree_depth = 5, nIter=iter)
+pred_train <- predict(boosting,df_upsampled,type="class")
+pred_test <- predict(boosting,df_test,type="class")
+
+train_scores<-sensitivity(pred_train$class, df_upsampled$Revenue, positive="TRUE")
+test_scores<-sensitivity(pred_test$class, df_test$Revenue, positive="TRUE")
+scores = c(iter,train_scores,test_scores)
+boosting_df <- rbind(boosting_df,scores)
+}
+colnames(boosting_df)<- c("Iteration","Training Recall Score","Testing Recall Score")
+
+ggplot(data=boosting_df,aes(Iteration))+
+  geom_line(aes(y=`Training Recall Score`, colour = "Train"))+
+  geom_line(aes(y=`Testing Recall Score`, colour = "Test"))
+```
+
+Optimal number of learners can be chosen as 2. 
+The model is clearly overfitting to the training data. This is because on each iteration adaboosing gives more weight to the misclassified classes and duplicate them in order to learn better on the misclassified results.
+
+
+__Implementing AdaBoost with the Optimal number of Learners =2:__
+```{r boosting,echo=FALSE}
+boosting<-adaboost(Revenue~ . ,data=df_upsampled,tree_depth = 5, nIter=2)
+
+pred_test <- predict(boosting,df_test,type="class")
+
+test_scores<-sensitivity(pred_test$class, df_test$Revenue, positive="TRUE")
+### Confusion Matrix
+table(df_test$Revenue, pred_test$class,dnn = c("Actual","Predicted"))
+
+cat("\nTest recall score is",test_scores)
+
+```
+
+Boosting the Decision Trees is increasing the test recall score by 1%.
+
+The plot shows the result of validation recall scores with training upsampled data. The optimal parameters are Cost: 1  and Gamma: 0.05
+
+__Support Vector Machine:__
+```{r SVM}
+df_svm <- df
+###Scaling is required for SVM
+df_svm[,1:6] <- scale(df_svm[,1:6])
+
+set.seed(1)
+train.index <- createDataPartition(df_svm$Revenue, p=0.7, list=FALSE)
+df_train <- df_svm[train.index, ]
+df_test <- df_svm[-train.index, ]
+table(df_train$Revenue)
+df_upsampled<-SMOTE(Revenue ~ ., df_train, perc.over= 400,perc.under = 140)
+table(df_upsampled$Revenue)
+
+svm_df <- data.frame()
+folds = createFolds(df_upsampled$Revenue, k = 3)
+# in cv we are going to applying a created function to our 'folds'
+for (c in c(0.1,1,5,10) ) {
+  for (g in c(0.01,0.05,0.001,0.005)) { 
+cv = lapply(folds, function(x) { # start of function
+  
+  training_fold = df_upsampled[-x, ] 
+  test_fold = df_upsampled[x, ] 
+  classifier = svm(formula = Revenue ~ .,data = training_fold,
+                   type = 'C-classification',cost = c,gamma = g,kernel = 'radial')
+  
+  y_pred = predict(classifier, newdata = test_fold)
+  recall = sensitivity(y_pred, test_fold$Revenue, positive="TRUE")
+  return(recall)
+}) 
+pred = mean(as.numeric(cv))
+scores = c(c,g,pred)
+svm_df <- rbind(svm_df,scores)
+}}
+colnames(svm_df)<- c("Cost","Gamma","ValidationRecallScore")
+svm_df$Gamma <- as.factor(svm_df$Gamma)
+
+ggplot(data=svm_df,aes(x=Cost,y=ValidationRecallScore,color=Gamma))+
+  geom_line()+geom_point()+ggtitle("(Cost and Gamma) Vs Validation Recall")
+  
+```
+__Implementing the SVM Radial Model with Optimal Cost and Gamma:__
+```{r SVM_best,echo=FALSE}
+svm_model <- svm(Revenue~., data=df_upsampled,type='C',kernel='radial',cost=1,gamma=0.05)
+
+pred_test <- predict(svm_model,df_test,type="class")
+
+test_scores<-sensitivity(pred_test, df_test$Revenue, positive="TRUE")
+
+table(df_test$Revenue, pred_test,dnn = c("Actual","Predicted"))
+cat("\nTest recall score is",test_scores)
+```
+Recall Score for SVM Radial seems to be very poor. The model is not generalising the data well and also data points are not distributed across the center.
+
+__Naive Bayes:__
+```{r NaiveBayes,echo=FALSE}
+df_nb <- df
+### Close to 80% of the Page values are zeros. We create a indicator page value feature to check if the page value is zero or non-zero.
+### This will give us a idea on how important the page value is on interested customers
+df_nb$PageValues_class <- "Zero"
+df_nb[df_nb$PageValues>0]$PageValues_class <- "Not Zero"
+df_nb$PageValues_class <- as.factor(df_nb$PageValues_class)
+df_nb$PageValues<-NULL
+
+###Partitioning and Sampling
+train.index <- createDataPartition(df_nb$Revenue, p=0.7, list=FALSE)
+df_train <- df_nb[train.index, ]
+df_test <- df_nb[-train.index, ]
+df_upsampled<-SMOTE(Revenue ~ ., df_train, perc.over= 400,perc.under = 140)
+
+nb_model <- naiveBayes(Revenue ~ ., data = df_upsampled)
+##pred.prob <- predict(nb_model, df_test, type = "raw")
+nb_model$tables$PageValues_class
+### If the customer visited a zero page value, there is a probability of 89% that the customer will not purchase anything.
+### If the customer visited a non zero page value, there is a probability of 62% that the customer will purchase. 
+
+###Predictions
+pred_test <- predict(nb_model, df_test,type="class")
+test_scores<-sensitivity(pred_test, df_test$Revenue, positive="TRUE")
+cat("\n\n")
+table(df_test$Revenue, pred_test,dnn = c("Actual","Predicted"))
+cat("\nTest recall score is",test_scores)
+
+```
+
+Naive Bayes is giving the best recall score of 0.90 when compared to the other models. 
+
+So, is Naive Bayes the best model for this dataset?
+Although, we had the best recall score, precision of this model seems to be too less as seen from the confusion matrix. Out of the 2200, that were predicted TRUE, only 516 of it were correct. We can find out the best model only we know other factors like the misclassification cost, marketing cost for each customer and profits generated by the customer if he ends up purchasing.
+
+## Clustering
+Removing the outliers from features ProductRelated_Duration and Administrative_Duration as k-means is very sensitive to outliers
+
+__Clustering:__
+```{r kmeans, echo=FALSE}
+
+df_clustering<-df_clustering[df_clustering$ProductRelated_Duration < product_duration_ot]
+df_clustering<-df_clustering[df_clustering$Administrative_Duration < admin_duration_ot]
+
+clust_df <- select(df_clustering, 'Administrative_Duration','ProductRelated_Duration','BounceRates')
+
+kmeans.wss <- function(data,maxclu=10,seed=1,nstart=10) {
+  wss <- rep(NA,maxclu)
+  for (i in 1:maxclu) { 
+    set.seed(seed)
+    model <- kmeans(data,centers=i,nstart=nstart)
+    wss[i] <- model$tot.withinss
+  }
+  return(wss)
+}
+
+plot.wss <- function(wss) {
+  plot(1:NROW(wss), wss, type="b", xlab="Number of Clusters", ylab="Aggregate Within Group SS")
+}
+a<-kmeans.wss(clust_df)
+
+plot.wss(a)
+### From the above elbow plot, we can choose 3 as the number of clusters
+
+###Assigning the clusters to the observations
+clust<-kmeans(clust_df,centers=3,nstart=10)
+clust_df$cluster <- clust$cluster
+table(clust$cluster)
+
+ggplot(clust_df, aes(x=ProductRelated_Duration,y=BounceRates,color=factor(cluster))) +geom_point()+ggtitle("Clustering Analysis using ProductRelated_Duration and BounceRates")
+### The bounce rates of the customers is low when the customer spends more time on the product related page and the bounce rate is high when the customer spends less time on the product related page
+
+###Cluster Centers
+clust$centers
+
+df_clustering$cluster <- clust$cluster
+df_clustering$cluster <- as.factor(df_clustering$cluster)
+
+###CTree to find the relationship of customer intention to purchase on time spent on Product Related page and type of Visitor
+tree1 <- ctree(Revenue~ProductRelated_Duration+VisitorType,data=df_clustering)
+plot(tree1)
+
+```
+
+Interpretations:
+If the user is a new visitor and the product related duration is greater than 429, then there is an 40% chance that the user will purchase.
+### Purchasing intention is the lowest when the user is a returning visitor and spends less than 85 on product related page 
+
+## Conclusion
+1) Based on Recall Scores, Naive bayes algorithm seems to be performing the best. But we cannot conclude it as the best model for this data but we do not the other factos like misclassification cost,marketing cost, average profit when the users purchases an item
+2) More marketing to be performed on New Visitors, users who spent more time on the Product Related pages and users who visit the pages with page value greater than zero.
+3) SMOTE sampling the dataset helped the algorithms to perform better on this data
+4) Model Performance can be improved when more data with the minority class is available or more relatable features are present in the dataset.
